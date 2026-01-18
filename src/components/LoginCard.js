@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 
@@ -9,11 +9,22 @@ function LoginCard({ handleToggleSignup }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
+  // 🔍 Log when component mounts
+  useEffect(() => {
+    console.log("🟦 LoginCard mounted");
+  }, []);
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
 
+    console.log("🔵 Login button clicked");
+    console.log("➡️ Username:", username);
+    console.log("➡️ Password length:", password.length);
+
     try {
+      console.log("📡 Sending POST /login request...");
+
       const response = await axios.post(
         "http://localhost:8080/login",
         {
@@ -25,12 +36,18 @@ function LoginCard({ handleToggleSignup }) {
         }
       );
 
+      console.log("✅ Login response status:", response.status);
+      console.log("✅ Login response data:", response.data);
+
       if (response.status === 200) {
-        console.log("Login success:", response.data);
+        console.log("🚀 Navigating to /home");
         navigate("/home");
       }
     } catch (err) {
-      console.error(err);
+      console.log("❌ Login failed");
+      console.log("❌ Error response:", err?.response);
+      console.log("❌ Error message:", err?.message);
+
       setError("Invalid username or password");
     }
   };
@@ -46,7 +63,10 @@ function LoginCard({ handleToggleSignup }) {
             type="text"
             id="username"
             value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            onChange={(e) => {
+              console.log("✏️ Username changed:", e.target.value);
+              setUsername(e.target.value);
+            }}
             placeholder="Enter your username"
             required
           />
@@ -58,7 +78,10 @@ function LoginCard({ handleToggleSignup }) {
             type="password"
             id="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => {
+              console.log("✏️ Password typed (length):", e.target.value.length);
+              setPassword(e.target.value);
+            }}
             placeholder="Enter your password"
             required
           />
@@ -85,7 +108,10 @@ function LoginCard({ handleToggleSignup }) {
         Not an existing user?
         <button
           className="simple-auth-btn"
-          onClick={handleToggleSignup}
+          onClick={() => {
+            console.log("🔁 Switching to Signup page");
+            handleToggleSignup();
+          }}
         >
           Sign up here
         </button>

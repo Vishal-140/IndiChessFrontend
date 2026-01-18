@@ -1,176 +1,193 @@
-import Header from "../components/Header";
-import SideNav from "../components/SideNav";
-import GameContainer from "../components/game-page-components/GameContainer";
-import { Client } from '@stomp/stompjs';
-import SockJS from 'sockjs-client';
-import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import React, { useEffect, useRef, useState } from "react";
+import { useParams, useLocation, useNavigate } from "react-router-dom";
+import { Client } from "@stomp/stompjs";
+import SockJS from "sockjs-client";
 
-const Game = () => {
+function Game() {
   const { matchId } = useParams();
-  const [stompClient, setStompClient] = useState(null);
-  const [isConnected, setIsConnected] = useState(false);
-  const [error, setError] = useState(null);
-  const [gameData, setGameData] = useState(null);
-  const [playerColor, setPlayerColor] = useState();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const checkedRef = useRef(false);
+  const stompRef = useRef(null);
 
-  // Should be fetching from backend
+  // 🎮 Game mode (STANDARD | RAPID | BLITZ)
+  const gameMode = location.state?.mode || "STANDARD";
+
+  // ⏱️ Initial time based on mode
+  const getInitialTime = () => {
+    if (gameMode === "BLITZ") return 3 * 60;
+    if (gameMode === "RAPID") return 10 * 60;
+    return null; // STANDARD → no timer
+  };
+
+  const [whiteTime, setWhiteTime] = useState(getInitialTime());
+  const [blackTime, setBlackTime] = useState(getInitialTime());
+  const [activePlayer, setActivePlayer] = useState("WHITE");
+
+  /* =====================================================
+     🔐 AUTH CHECK (RUN ONCE)
+  ===================================================== */
   useEffect(() => {
-    fetch(`http://localhost:8080/game/${matchId}`, {
-    method: 'GET',
-    credentials: 'include'
-    })
-    .then(response => response.json())
-    .then(data => {
-        console.log("Game details response:", data);
-        setPlayerColor(data.playerColor); // Make sure this field exists
-        setGameData(data);
-    });
-  }, [matchId]);
+    if (checkedRef.current) return;
+    checkedRef.current = true;
 
+    console.log("🔐 Checking auth in Game page");
+
+    fetch("http://localhost:8080/auth/me", {
+      credentials: "include",
+    })
+      .then((res) => {
+        if (res.status === 401) {
+          console.log("🚫 Not authenticated → redirect to /");
+          navigate("/", { replace: true });
+        }
+      })
+      .catch(() => navigate("/", { replace: true }));
+  }, [navigate]);
+
+  /* =====================================================
+     🔌 WEBSOCKET CONNECT
+  ===================================================== */
   useEffect(() => {
-    if (!matchId) {
-      setError("No match ID provided");
-      return;
-    }
+    console.log("🔌 Connecting WebSocket...");
 
-    // To this:
-  fetch(`http://localhost:8080/game/${matchId}`, {
-      method: 'GET',
-      credentials: 'include'  // Important for cookies
-  })
-    .then(response => {
-      if (!response.ok) throw new Error('Failed to fetch game data');
-      return response.json();
-    })
-    .then(data => {
-      setPlayerColor(data.playerColor); // 'white' or 'black'
-      setGameData(data);
-      console.log("Game data loaded:", data);
-    })
-    .catch(error => {
-      console.error('Error fetching game details:', error);
-      setError("Failed to load game details");
-    });
-
-    // WebSocket connection
-    const socket = new SockJS('http://localhost:8080/ws');
     const client = new Client({
-      webSocketFactory: () => socket,
-      reconnectDelay: 5000,
-      heartbeatIncoming: 4000,
-      heartbeatOutgoing: 4000,
-      debug: (str) => console.log('STOMP: ' + str),
-      
-      onConnect: (frame) => {
-        console.log("Connected to WebSocket:", frame);
-        setIsConnected(true);
-        setError(null);
-        
-        // Subscribe to game updates
-        client.subscribe(`/topic/game/${matchId}`, (message) => {
-          console.log("Game update received:", message.body);
-          const update = JSON.parse(message.body);
-          setGameData(prev => ({ ...prev, ...update }));
-        });
-        
-        // Subscribe to move updates
-        client.subscribe(`/topic/moves/${matchId}`, (message) => {
-          console.log("Move received:", message.body);
-          const moveData = JSON.parse(message.body);
-          // This will be handled in GameContainer
-        });
-        
-        // Subscribe to chat messages
-        client.subscribe(`/topic/chat/${matchId}`, (message) => {
-          console.log("Chat message:", message.body);
-        });
+      webSocketFactory: () =>
+        new SockJS("http://localhost:8080/ws"),
 
-        // Notify server that player has joined
-        client.publish({
-          destination: `/app/game/${matchId}/join`,
-          body: JSON.stringify({ 
-            type: 'PLAYER_JOINED',
-            playerColor: playerColor,
-            timestamp: new Date().toISOString()
-          })
+      reconnectDelay: 5000,
+
+      onConnect: () => {
+        console.log("✅ WebSocket connected");
+
+        // 📡 Subscribe to match topic
+        client.subscribe(`/topic/game/${matchId}`, (msg) => {
+          const move = JSON.parse(msg.body);
+          console.log("♟️ Move received:", move);
+
+          // switch turn on received move
+          setActivePlayer((p) => (p === "WHITE" ? "BLACK" : "WHITE"));
         });
       },
-      
+
       onStompError: (frame) => {
-        console.error("STOMP error:", frame);
-        setError(`Connection error: ${frame.headers?.message || 'Unknown error'}`);
-        setIsConnected(false);
+        console.error("❌ STOMP error", frame);
       },
-      
-      onWebSocketError: (error) => {
-        console.error("WebSocket error:", error);
-        setError("Failed to connect to game server");
-        setIsConnected(false);
-      },
-      
-      onDisconnect: () => {
-        console.log("Disconnected from WebSocket");
-        setIsConnected(false);
-      }
     });
-    
+
+    stompRef.current = client;
     client.activate();
-    setStompClient(client);
 
     return () => {
-      if (client) {
-        client.deactivate();
-      }
+      console.log("🔌 Disconnect WebSocket");
+      client.deactivate();
     };
   }, [matchId]);
 
-  if (error) {
-    return (
-      <div className="app-container">
-        <SideNav />
-        <div className="main-container">
-          <Header />
-          <div className="error-container">
-            <h2>Error</h2>
-            <p>{error}</p>
-            <button onClick={() => window.location.href = '/'}>Return to Home</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  /* =====================================================
+     ⏱️ TIMER LOGIC
+  ===================================================== */
+  useEffect(() => {
+    if (whiteTime === null && blackTime === null) return;
 
-  if (!gameData || !isConnected) {
-    return (
-      <div className="app-container">
-        <SideNav />
-        <div className="main-container">
-          <Header />
-          <div className="loading-container">
-            <div className="spinner"></div>
-            <p>Loading game...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+    const interval = setInterval(() => {
+      if (activePlayer === "WHITE") {
+        setWhiteTime((t) => (t > 0 ? t - 1 : 0));
+      } else {
+        setBlackTime((t) => (t > 0 ? t - 1 : 0));
+      }
+    }, 1000);
 
+    return () => clearInterval(interval);
+  }, [activePlayer]);
+
+  const formatTime = (seconds) => {
+    if (seconds === null) return "∞";
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  };
+
+  /* =====================================================
+     ♟️ SEND MOVE (TEST)
+  ===================================================== */
+  const makeMove = () => {
+    if (!stompRef.current || !stompRef.current.connected) {
+      console.log("❌ WebSocket not connected");
+      return;
+    }
+
+    const move = {
+      matchId,
+      from: "e2",
+      to: "e4",
+    };
+
+    console.log("📤 Sending move:", move);
+
+    stompRef.current.publish({
+      destination: "/app/game/move",
+      body: JSON.stringify(move),
+    });
+
+    // switch turn locally
+    setActivePlayer((p) => (p === "WHITE" ? "BLACK" : "WHITE"));
+  };
+
+  /* =====================================================
+     UI
+  ===================================================== */
   return (
-    <div className="app-container">
-      <SideNav />
-      <div className="main-container">
-        <Header />
-        <GameContainer 
-          matchId={matchId}
-          stompClient={stompClient}
-          isConnected={isConnected}
-          playerColor={playerColor}
-          initialGameData={gameData}
-        />
+    <div style={{ padding: "20px" }}>
+      <h2>Chess Game</h2>
+
+      <p><b>Match ID:</b> {matchId}</p>
+      <p><b>Game Mode:</b> {gameMode}</p>
+
+      {/* ⏱️ TIMERS */}
+      <div style={{ display: "flex", gap: "40px", marginBottom: "20px" }}>
+        <div>
+          <h3>White</h3>
+          <p>{formatTime(whiteTime)}</p>
+        </div>
+
+        <div>
+          <h3>Black</h3>
+          <p>{formatTime(blackTime)}</p>
+        </div>
       </div>
+
+      {/* ♟️ BOARD (PLACEHOLDER) */}
+      <div
+        style={{
+          width: "320px",
+          height: "320px",
+          display: "grid",
+          gridTemplateColumns: "repeat(8, 1fr)",
+          border: "2px solid black",
+        }}
+      >
+        {[...Array(64)].map((_, i) => (
+          <div
+            key={i}
+            style={{
+              background:
+                (Math.floor(i / 8) + (i % 8)) % 2 === 0
+                  ? "#eee"
+                  : "#666",
+              width: "40px",
+              height: "40px",
+            }}
+          />
+        ))}
+      </div>
+
+      {/* TEST BUTTON */}
+      <button onClick={makeMove} style={{ marginTop: "20px" }}>
+        Make Move (send via WebSocket)
+      </button>
     </div>
   );
-};
+}
 
 export default Game;

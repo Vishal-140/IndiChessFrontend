@@ -1,55 +1,53 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import LoginCard from '../components/LoginCard';
-import SignupCard from '../components/SignUpCard';
+import LoginCard from "../components/LoginCard";
+import SignupCard from "../components/SignUpCard";
 
 function HomeCard() {
-  const [showSignup, setShowSignup] = useState(false); // Track if we need to show SignupCard
-  const [isAuthenticated, setIsAuthenticated] = useState(false); // To track authentication status
-  const navigate = useNavigate(); // For navigation (redirecting to home)
-  
-  // Check if the user is already authenticated on component mount
+  const [showSignup, setShowSignup] = useState(false);
+  const navigate = useNavigate();
+
   useEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const response = await fetch("http://localhost:8080/home", {
-          method: "GET",
-          credentials: "include",
-        });
+    console.log("🔍 Checking authentication from HomeCard...");
 
-        if (response.ok) {
-          // If authenticated, redirect to /home
-          setIsAuthenticated(true);
-          navigate("/home");  // Redirect to /home using useNavigate
-        } else {
-          setIsAuthenticated(false);
+    fetch("http://localhost:8080/auth/me", {
+      method: "GET",
+      credentials: "include",
+    })
+      .then(async (res) => {
+        console.log("🔐 /auth/me status:", res.status);
+
+        if (res.status !== 200) {
+          console.log("❌ Not authenticated → stay on login");
+          return;
         }
-      } catch (error) {
-        console.error("Error checking authentication:", error);
-        setIsAuthenticated(false);
-      }
-    };
 
-    checkAuth();
+        const contentType = res.headers.get("content-type");
+
+        // 🚨 CRITICAL CHECK
+        if (!contentType || !contentType.includes("application/json")) {
+          console.log("❌ Received HTML, not JWT auth");
+          return;
+        }
+
+        console.log("✅ Authenticated → redirect to /home");
+        navigate("/home");
+      })
+      .catch((err) => {
+        console.log("❌ Auth check failed:", err);
+      });
   }, [navigate]);
 
   const handleToggleSignup = () => {
-    setShowSignup((prev) => !prev); // Toggle between login and signup
+    setShowSignup((prev) => !prev);
   };
 
   return (
     <div className="home-card">
-      {isAuthenticated ? (
-        // If authenticated, don't show the login/signup cards, just redirect to /home
-        <div>Redirecting to Home...</div>
+      {showSignup ? (
+        <SignupCard handleToggleSignup={handleToggleSignup} />
       ) : (
-        <div>
-          {showSignup ? (
-            <SignupCard handleToggleSignup={handleToggleSignup} />
-          ) : (
-            <LoginCard handleToggleSignup={handleToggleSignup} />
-          )}
-        </div>
+        <LoginCard handleToggleSignup={handleToggleSignup} />
       )}
     </div>
   );
